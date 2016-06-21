@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::default::Default;
 use std::fmt;
 use std::result;
 use std::sync::{mpsc, Arc, RwLock};
@@ -28,19 +29,18 @@ pub type MessageHandler<T> = Fn(&mut Envelope) -> result::Result<(), T>;
 pub trait Dispatcher: Sized + Send {
     type Config: Send + Sync + DispatcherCfg;
     type Error: Send + From<zmq::Error> + fmt::Display;
-    type State;
-
-    fn message_queue() -> &'static str;
-
-    // JW TODO: This should take something that impelements an "application config" trait
-    fn new(config: Arc<RwLock<Self::Config>>) -> Self;
-
-    fn context(&mut self) -> &mut zmq::Context;
+    type State: Clone + Send;
 
     fn dispatch(message: &mut Envelope,
                 socket: &mut zmq::Socket,
                 state: &mut Self::State)
                 -> result::Result<(), Self::Error>;
+
+    fn message_queue() -> &'static str;
+
+    fn new(config: Arc<RwLock<Self::Config>>, state: Self::State) -> Self;
+
+    fn context(&mut self) -> &mut zmq::Context;
 
     fn init(&mut self) -> result::Result<(), Self::Error> {
         Ok(())

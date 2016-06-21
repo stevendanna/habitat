@@ -29,8 +29,8 @@ pub fn job_create(req: &mut Envelope,
                   -> Result<()> {
     let mut job = proto::Job::new();
     job.set_state(proto::JobState::default());
-    state.datastore().jobs.write(&mut job).unwrap();
-    state.datastore().job_queue.enqueue(&job).unwrap();
+    state.datastore.jobs.write(&mut job).unwrap();
+    state.datastore.job_queue.enqueue(&job).unwrap();
     try!(state.work_manager.notify_work());
     try!(req.reply_complete(sock, &job));
     Ok(())
@@ -38,7 +38,7 @@ pub fn job_create(req: &mut Envelope,
 
 pub fn job_get(req: &mut Envelope, sock: &mut zmq::Socket, state: &mut ServerState) -> Result<()> {
     let msg: proto::JobGet = try!(req.parse_msg());
-    match state.datastore().jobs.find(&msg.get_id()) {
+    match state.datastore.jobs.find(&msg.get_id()) {
         Ok(job) => {
             let reply: proto::Job = job.into();
             try!(req.reply_complete(sock, &reply));

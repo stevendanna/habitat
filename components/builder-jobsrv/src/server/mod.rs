@@ -37,23 +37,19 @@ const BE_LISTEN_ADDR: &'static str = "inproc://backend";
 const WORKER_MGR_ADDR: &'static str = "inproc://work-manager";
 const WORKER_TIMEOUT_MS: u64 = 33_000;
 
+#[derive(Clone)]
 pub struct ServerState {
-    pub work_manager: WorkManager,
-    datastore: Option<DataStore>,
+    // JW TODO: can't make server state clonable if I put a zmq socket in it. Work Manager
+    // might need to become it's own thread with a channel?
+    pub work_manager: Arc<Box<WorkManager>>,
+    datastore: Arc<Box<DataStore>>,
 }
 
 impl ServerState {
-    pub fn datastore(&mut self) -> &mut DataStore {
-        self.datastore.as_mut().unwrap()
-    }
-}
-
-impl Default for ServerState {
-    fn default() -> Self {
-        let work_manager = WorkManager::default();
+    pub fn new(datastore: DataStore) -> Self {
         ServerState {
-            datastore: None,
-            work_manager: work_manager,
+            datastore: Arc::new(Box::new(datastore)),
+            work_manager: WorkManager::default(),
         }
     }
 }
@@ -89,27 +85,6 @@ pub struct Worker {
     state: ServerState,
 }
 
-impl Worker {
-    fn try_connect_datastore(&mut self) {
-        loop {
-            let result = {
-                let cfg = self.config.read().unwrap();
-                DataStore::open(cfg.deref())
-            };
-            match result {
-                Ok(datastore) => {
-                    self.state.datastore = Some(datastore);
-                    break;
-                }
-                Err(e) => {
-                    error!("{}", e);
-                    thread::sleep(Duration::from_millis(5000));
-                }
-            }
-        }
-    }
-}
-
 impl Dispatcher for Worker {
     type Config = Config;
     type Error = Error;
@@ -134,8 +109,7 @@ impl Dispatcher for Worker {
         (**ZMQ_CONTEXT).as_mut()
     }
 
-    fn new(config: Arc<RwLock<Config>>) -> Self {
-        let state = ServerState::default();
+    fn new(config: Arc<RwLock<Config>>, state: Self::State) -> Self {
         Worker {
             config: config,
             state: state,
@@ -144,7 +118,6 @@ impl Dispatcher for Worker {
 
     fn init(&mut self) -> Result<()> {
         try!(self.state.work_manager.connect());
-        self.try_connect_datastore();
         Ok(())
     }
 
@@ -187,9 +160,14 @@ impl Application for Server {
 
     fn run(&mut self) -> Result<()> {
         try!(self.be_sock.bind(BE_LISTEN_ADDR));
-        let cfg1 = self.config.clone();
+        let datastore = {
+            let cfg = self.config.read().unwrap();
+            DataStore::start(cfg.deref())
+        };
+        let cfg = self.config.clone();
         let cfg2 = self.config.clone();
-        let sup: Supervisor<Worker> = Supervisor::new(cfg1);
+        let init_state = ServerState::new(datastore);
+        let sup: Supervisor<Worker> = Supervisor::new(cfg, init_state);
         let work_mgr = try!(WorkerManager::start(cfg2));
         try!(sup.start());
         try!(self.connect());
